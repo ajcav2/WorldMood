@@ -22,7 +22,7 @@ pDiffSmall = 0.08
 
 # Alpha value for fast/slow exponential moving averages
 fast = 0.25
-slow = 0.003
+slow = 0.01
 
 # Initialize queues for each mood
 sizeOfQueue = 50000
@@ -35,12 +35,12 @@ scaredQueue = Queue.Queue(maxsize=sizeOfQueue)
 envyQueue = Queue.Queue(maxsize=sizeOfQueue)
 
 # Define terms for each mood
-loveKeywords = ['i love you','i love her','i love him','all my love','i really love','i\'m in love','send love','loving']
-happyKeywords = ['happiest','so happy','so excited','i\'m happy','woot','w00t','so amped','ecstatic']
-surpriseKeywords = ['wow','O_o','can\'t believe','wtf','unbelievable','unreal','sureal','unexpected','sudden','jeez','holy shit']
-angryKeywords = ['i hate','really angry','i am mad','really hate','so angry','livid']
+loveKeywords = ['i love you','i love her','i love him','all my love','i really love','i\'m in love','send love','loving','i love that']
+happyKeywords = ['happiest','so happy','so excited','i\'m happy','woot','w00t','so amped','ecstatic','excited to']
+surpriseKeywords = ['wow','O_o','can\'t believe','wtf','unbelievable','unreal','sureal','unexpected','sudden','jeez']
+angryKeywords = ['i hate','really angry','i am mad','really hate','so angry','livid','i\'m pissed','unfair']
 envyKeywords = ['i\'m envious','i\'m jealous','i want to be','why can\'t i','i wish i']
-sadKeywords = ['i\'m so sad','i\'m heartbroken','i\'m so upset','i\'m depressed','i can\'t stop crying','heartbroken']
+sadKeywords = ['i\'m so sad','i\'m heartbroken','i\'m so upset','i\'m depressed','i can\'t stop crying','heartbroken','tragic','will be missed','will miss']
 scaredKeywords = ['i\'m so scared','i\'m really scared','i\'m terrified','i\'m really afraid','so scared i']
 
 # Import the necessary methods from "twitter" library
@@ -58,13 +58,8 @@ oauth = OAuth(ACCESS_TOKEN, ACCESS_SECRET, CONSUMER_KEY, CONSUMER_SECRET)
 twitter_stream = TwitterStream(auth=oauth)
 
 # Get a sample of the public data following through Twitter
-# iterator = twitter_stream.statuses.sample()
 iterator = twitter_stream.statuses.sample(language="en")
 
-# Print each tweet in the stream to the screen 
-# Here we set it to stop after getting 1000 tweets. 
-# You don't have to set it to stop, but can continue running 
-# the Twitter API to collect data for days or even longer.
 def stream():
     # Counter to tell use when we've gone through all of our tweets
     tweetCount = numberOfTweets
@@ -113,6 +108,7 @@ def stream():
                         surpriseCount += 1
         except KeyError:
             print("Key error.")
+            continue
 
         # We've reached the end of our list. Return.
         if tweetCount <= 0:
@@ -247,12 +243,26 @@ def writeMoodData(q,mood):
     with open("/home/pi/Documents/WorldMood/moodData/"+mood, "w") as f:
         for val in temp:
             f.write("%s\n" % val)
+        f.close()
+
+def cleanUp():
+    print("Writing queue's...")
+    writeMoodData(happyQueue,"happy")
+    writeMoodData(sadQueue, "sad")
+    writeMoodData(loveQueue, "love")
+    writeMoodData(envyQueue, "envy")
+    writeMoodData(angryQueue, "angry")
+    writeMoodData(scaredQueue, "scared")
+    writeMoodData(surpriseQueue, "surprise")
+    print("Done.")
+
+    wiringpi.softPwmWrite(redPin,100)
+    wiringpi.softPwmWrite(greenPin,100)
+    wiringpi.softPwmWrite(bluePin,100)
 
     
 if __name__ == "__main__":
     go = True
-    i = 0
-    listOfMoods = []
     state = "happy"
     rgbVariable.colorChangeSmall("happy","surprise")
 
@@ -267,14 +277,21 @@ if __name__ == "__main__":
     
     while(go):
         startTime = time.time()
+        received = False
         try:
             # Get number of tweets of each mood from stream
-            numHappy,numSad,numLove,numEnvy,numAngry,numScared,numSurprise = stream()
+            while not received:
+                try:
+                    numHappy,numSad,numLove,numEnvy,numAngry,numScared,numSurprise = stream()
+                    received = True
+                except TypeError as e:
+                    print(e)
+                
 
             # Add each value to the queue
             happyQueue = addToQueue(happyQueue,numHappy)
             sadQueue = addToQueue(sadQueue,numSad)
-            loveQueue = addToQueue(sadQueue,numLove)
+            loveQueue = addToQueue(loveQueue,numLove)
             envyQueue = addToQueue(envyQueue,numEnvy)
             angryQueue = addToQueue(angryQueue,numAngry)
             scaredQueue = addToQueue(scaredQueue,numScared)
@@ -331,36 +348,22 @@ if __name__ == "__main__":
                     rgbVariable.colorChangeSmall(state,oldState)
 
             # Logging stuff...
-            if not i == 0:
-                print(state.title()+" Fast EMA: "+str(getEMA(list(maxQueue.queue),fast)))
-                print(state.title()+" Slow EMA: "+str(getEMA(list(maxQueue.queue),slow)))
+            print(state.title()+" Fast EMA: "+str(getEMA(list(maxQueue.queue),fast)))
+            print(state.title()+" Slow EMA: "+str(getEMA(list(maxQueue.queue),slow)))
             print(state.title()+" %Diff = "+str(maxDiff*100.0))
             print("Time to complete: "+str(round(time.time()-startTime,1))+" seconds")
-            i += 1
+            print("Current queue length: "+str(len(list(happyQueue.queue))))
+            print
             f = open('mood', 'a')
             f.write(state+'\n')
             f.close()
             
-        except TypeError as e:
-            print(e)
-            continue
+##        except TypeError as e:
+##            print(e)
+##            print
+##            cleanUp()
+##            go = False
         
         except (KeyboardInterrupt):
-            # Write data from queue's to file
-            print("Writing queue's...")
-            writeMoodData(happyQueue,"happy")
-            writeMoodData(sadQueue, "sad")
-            writeMoodData(loveQueue, "love")
-            writeMoodData(envyQueue, "envy")
-            writeMoodData(angryQueue, "angry")
-            writeMoodData(scaredQueue, "scared")
-            writeMoodData(surpriseQueue, "surprise")
-            print("Done.")
-
-            # Turn off all pins
-            wiringpi.softPwmWrite(redPin,100)
-            wiringpi.softPwmWrite(greenPin,100)
-            wiringpi.softPwmWrite(bluePin,100)
-
-            # End the loop
+            cleanUp()
             go = False
