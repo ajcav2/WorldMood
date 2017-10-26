@@ -17,12 +17,12 @@ numberOfTweets = 5000 # 5000
 state = ""
 
 # Threshold mood change
-pDiffLarge = 0.14
-pDiffSmall = 0.08
+pDiffLarge = 0.50
+pDiffSmall = 0.20
 
 # Alpha value for fast/slow exponential moving averages
 fast = 0.25
-slow = 0.01
+slow = 0.008
 
 # Initialize queues for each mood
 sizeOfQueue = 50000
@@ -57,11 +57,9 @@ oauth = OAuth(ACCESS_TOKEN, ACCESS_SECRET, CONSUMER_KEY, CONSUMER_SECRET)
 # Initiate the connection to Twitter Streaming API
 twitter_stream = TwitterStream(auth=oauth)
 
-# Get a sample of the public data following through Twitter
-iterator = twitter_stream.statuses.sample(language="en")
 
-def stream():
-    # Counter to tell use when we've gone through all of our tweets
+def stream(debug=False):
+    # Counter to tell us when we've gone through all of our tweets
     tweetCount = numberOfTweets
 
     # Initially, we have zero of each tweet type
@@ -76,6 +74,7 @@ def stream():
     # Loop through each tweet
     for tweet in iterator:
         tweetCount -= 1
+        
         # If we find a keyword in the tweet, increment mood counter
         try:
             text = tweet['text']
@@ -106,9 +105,10 @@ def stream():
             for keyword in surpriseKeywords:
                     if keyword in tweet['text'].lower():
                         surpriseCount += 1
-        except KeyError:
-            print("Key error.")
-            continue
+        except KeyError as e:
+            print(e)
+            break
+             
 
         # We've reached the end of our list. Return.
         if tweetCount <= 0:
@@ -120,6 +120,21 @@ def stream():
             print("Scared: "+str(scaredCount))
             print("Angry: "+str(angryCount))
             return happyCount, sadCount, loveCount, envyCount, angryCount, scaredCount, surpriseCount
+        
+    if debug:
+        print("Tweet count: "+str(tweetCount))
+        print("Happy: "+str(happyCount))
+        print("Sad: "+str(sadCount))
+        print("Love: "+str(loveCount))
+        print("Envy: "+str(envyCount))
+        print("Surprise: "+str(surpriseCount))
+        print("Scared: "+str(scaredCount))
+        print("Angry: "+str(angryCount))
+        print("Iterator: "+str(iterator))
+        with open("/home/pi/Documents/WorldMood/moodData/debug", "w") as f:
+            f.write(str(tweet))
+            f.close()
+    return 0,0,0,0,0,0,0
         
 
 def getEMA(sample,a):
@@ -262,108 +277,105 @@ def cleanUp():
 
     
 if __name__ == "__main__":
-    go = True
-    state = "happy"
-    rgbVariable.colorChangeSmall("happy","surprise")
+    initialize = True
+    while(initialize):
+        go = True
+        state = "happy"
+        rgbVariable.colorChangeSmall("happy","surprise")
+        
+        # Get a sample of the public data following through Twitter
+        iterator = twitter_stream.statuses.sample(language="en")
 
-    # Read mood data into respective queue's
-    happyQueue = readMoodData(happyQueue,"happy")
-    sadQueue = readMoodData(sadQueue, "sad")
-    loveQueue = readMoodData(loveQueue, "love")
-    envyQueue = readMoodData(envyQueue, "envy")
-    angryQueue = readMoodData(angryQueue, "angry")
-    scaredQueue = readMoodData(scaredQueue, "scared")
-    surpriseQueue = readMoodData(surpriseQueue, "surprise")
-    
-    while(go):
-        startTime = time.time()
-        received = False
-        try:
-            # Get number of tweets of each mood from stream
-            while not received:
-                try:
-                    numHappy,numSad,numLove,numEnvy,numAngry,numScared,numSurprise = stream()
-                    received = True
-                except TypeError as e:
-                    print(e)
+        # Read mood data into respective queue's
+        happyQueue = readMoodData(happyQueue,"happy")
+        sadQueue = readMoodData(sadQueue, "sad")
+        loveQueue = readMoodData(loveQueue, "love")
+        envyQueue = readMoodData(envyQueue, "envy")
+        angryQueue = readMoodData(angryQueue, "angry")
+        scaredQueue = readMoodData(scaredQueue, "scared")
+        surpriseQueue = readMoodData(surpriseQueue, "surprise")
+        
+        while(go):
+            try:
+                startTime = time.time()
+                numHappy,numSad,numLove,numEnvy,numAngry,numScared,numSurprise = stream()
+                if numHappy+numSad+numLove+numAngry+numScared+numSurprise == 0:
+                    go = False
+                    cleanUp()
+                    break
+                            
+                # Add each value to the queue
+                happyQueue = addToQueue(happyQueue,numHappy)
+                sadQueue = addToQueue(sadQueue,numSad)
+                loveQueue = addToQueue(loveQueue,numLove)
+                envyQueue = addToQueue(envyQueue,numEnvy)
+                angryQueue = addToQueue(angryQueue,numAngry)
+                scaredQueue = addToQueue(scaredQueue,numScared)
+                surpriseQueue = addToQueue(surpriseQueue,numSurprise)
+
+                # Calculate % diff for each mood (fast EMA vs slow EMA)
+                pDiffHappy = getPDiff(list(happyQueue.queue))
+                pDiffSad = getPDiff(list(sadQueue.queue))
+                pDiffLove = getPDiff(list(loveQueue.queue))
+                pDiffEnvy = getPDiff(list(envyQueue.queue))
+                pDiffAngry = getPDiff(list(angryQueue.queue))
+                pDiffScared = getPDiff(list(scaredQueue.queue))
+                pDiffSurprise = getPDiff(list(surpriseQueue.queue))
+
+                # Find which mood had the greatest shift
+                maxDiff = 0
+                if pDiffHappy > maxDiff:
+                    maxDiff = pDiffHappy
+                    state_change = "happy"
+                    maxQueue = happyQueue
+                if pDiffSad > maxDiff:
+                    maxDiff = pDiffSad
+                    state_change = "sad"
+                    maxQueue = sadQueue
+                if pDiffLove > maxDiff:
+                    maxDiff = pDiffLove
+                    state_change = "love"
+                    maxQueue = loveQueue
+                if pDiffEnvy > maxDiff:
+                    maxDiff = pDiffEnvy
+                    state_change = "envy"
+                    maxQueue = envyQueue
+                if pDiffAngry > maxDiff:
+                    maxDiff = pDiffAngry
+                    state_change = "angry"
+                    maxQueue = angryQueue
+                if pDiffScared > maxDiff:
+                    maxDiff = pDiffScared
+                    state_change = "scared"
+                    maxQueue = scaredQueue
+                if pDiffSurprise > maxDiff:
+                    maxDiff = pDiffSurprise
+                    state_change = "surprise"
+                    maxQueue = surpriseQueue
+                
+                # Determine if the change is large enough to change the state or change the lights
+                oldState = state
+                if state_change != oldState:
+                    if maxDiff > pDiffLarge:
+                        state = state_change
+                        rgbVariable.colorChangeLarge(state,oldState)
+                    elif maxDiff > pDiffSmall:
+                        state = state_change
+                        rgbVariable.colorChangeSmall(state,oldState)
+
+                # Logging stuff...
+                print(state.title()+" Fast EMA: "+str(round(getEMA(list(maxQueue.queue),fast),2)))
+                print(state.title()+" Slow EMA: "+str(round(getEMA(list(maxQueue.queue),slow),2)))
+                print(state.title()+" %Diff = "+str(round(maxDiff*100,1)))
+                print("Time to complete: "+str(round(time.time()-startTime,1))+" seconds")
+                print("Current queue length: "+str(len(list(happyQueue.queue))))
+                print
+                f = open('mood', 'a')
+                f.write(state+'\n')
+                f.close()
                 
 
-            # Add each value to the queue
-            happyQueue = addToQueue(happyQueue,numHappy)
-            sadQueue = addToQueue(sadQueue,numSad)
-            loveQueue = addToQueue(loveQueue,numLove)
-            envyQueue = addToQueue(envyQueue,numEnvy)
-            angryQueue = addToQueue(angryQueue,numAngry)
-            scaredQueue = addToQueue(scaredQueue,numScared)
-            surpriseQueue = addToQueue(surpriseQueue,numSurprise)
-
-            # Calculate % diff for each mood (fast EMA vs slow EMA)
-            pDiffHappy = getPDiff(list(happyQueue.queue))
-            pDiffSad = getPDiff(list(sadQueue.queue))
-            pDiffLove = getPDiff(list(loveQueue.queue))
-            pDiffEnvy = getPDiff(list(envyQueue.queue))
-            pDiffAngry = getPDiff(list(angryQueue.queue))
-            pDiffScared = getPDiff(list(scaredQueue.queue))
-            pDiffSurprise = getPDiff(list(surpriseQueue.queue))
-
-            # Find which mood had the greatest shift
-            maxDiff = 0
-            if pDiffHappy > maxDiff:
-                maxDiff = pDiffHappy
-                state_change = "happy"
-                maxQueue = happyQueue
-            if pDiffSad > maxDiff:
-                maxDiff = pDiffSad
-                state_change = "sad"
-                maxQueue = sadQueue
-            if pDiffLove > maxDiff:
-                maxDiff = pDiffLove
-                state_change = "love"
-                maxQueue = loveQueue
-            if pDiffEnvy > maxDiff:
-                maxDiff = pDiffEnvy
-                state_change = "envy"
-                maxQueue = envyQueue
-            if pDiffAngry > maxDiff:
-                maxDiff = pDiffAngry
-                state_change = "angry"
-                maxQueue = angryQueue
-            if pDiffScared > maxDiff:
-                maxDiff = pDiffScared
-                state_change = "scared"
-                maxQueue = scaredQueue
-            if pDiffSurprise > maxDiff:
-                maxDiff = pDiffSurprise
-                state_change = "surprise"
-                maxQueue = surpriseQueue
-            
-            # Determine if the change is large enough to change the state or change the lights
-            oldState = state
-            if state_change != oldState:
-                if maxDiff > pDiffLarge:
-                    state = state_change
-                    rgbVariable.colorChangeLarge(state,oldState)
-                elif maxDiff > pDiffSmall:
-                    state = state_change
-                    rgbVariable.colorChangeSmall(state,oldState)
-
-            # Logging stuff...
-            print(state.title()+" Fast EMA: "+str(getEMA(list(maxQueue.queue),fast)))
-            print(state.title()+" Slow EMA: "+str(getEMA(list(maxQueue.queue),slow)))
-            print(state.title()+" %Diff = "+str(maxDiff*100.0))
-            print("Time to complete: "+str(round(time.time()-startTime,1))+" seconds")
-            print("Current queue length: "+str(len(list(happyQueue.queue))))
-            print
-            f = open('mood', 'a')
-            f.write(state+'\n')
-            f.close()
-            
-##        except TypeError as e:
-##            print(e)
-##            print
-##            cleanUp()
-##            go = False
-        
-        except (KeyboardInterrupt):
-            cleanUp()
-            go = False
+            except (KeyboardInterrupt):
+                cleanUp()
+                go = False
+                initialize = False
