@@ -1,9 +1,10 @@
 import time, sys
 import auth
 import json
-import rgbVariable
+import sendToArduino
 import wiringpi
 import Queue
+import random
 
 # Initialize pin numbers
 redPin = 20
@@ -25,6 +26,7 @@ fast = 0.25
 slow = 0.008
 
 # Initialize queues for each mood
+# Should have used deque whooops...
 sizeOfQueue = 50000
 happyQueue = Queue.Queue(maxsize=sizeOfQueue)
 sadQueue = Queue.Queue(maxsize=sizeOfQueue)
@@ -41,7 +43,7 @@ surpriseKeywords = ['wow','O_o','can\'t believe','wtf','unbelievable','unreal','
 angryKeywords = ['i hate','really angry','i am mad','really hate','so angry','livid','i\'m pissed','unfair']
 envyKeywords = ['i\'m envious','i\'m jealous','i want to be','why can\'t i','i wish i']
 sadKeywords = ['i\'m so sad','i\'m heartbroken','i\'m so upset','i\'m depressed','i can\'t stop crying','heartbroken','tragic','will be missed','will miss']
-scaredKeywords = ['i\'m so scared','i\'m really scared','i\'m terrified','i\'m really afraid','so scared i']
+scaredKeywords = ['i\'m so scared','i\'m really scared','i\'m terrified','i\'m really afraid','so scared i','scared that','afraid of']
 
 # Import the necessary methods from "twitter" library
 from twitter import Twitter, OAuth, TwitterHTTPError, TwitterStream
@@ -271,9 +273,10 @@ def cleanUp():
     writeMoodData(surpriseQueue, "surprise")
     print("Done.")
 
-    wiringpi.softPwmWrite(redPin,100)
-    wiringpi.softPwmWrite(greenPin,100)
-    wiringpi.softPwmWrite(bluePin,100)
+def getRandomState():
+    listOfMoods = ["happy","sad","envy","love","angry","surprise","scared"]
+    return random.choice(listOfMoods)
+    
 
     
 if __name__ == "__main__":
@@ -281,7 +284,8 @@ if __name__ == "__main__":
     while(initialize):
         go = True
         state = "happy"
-        rgbVariable.colorChangeSmall("happy","surprise")
+        state_change = "happy"
+        sendToArduino.colorChangeSmall(state)
         
         # Get a sample of the public data following through Twitter
         iterator = twitter_stream.statuses.sample(language="en")
@@ -296,13 +300,17 @@ if __name__ == "__main__":
         surpriseQueue = readMoodData(surpriseQueue, "surprise")
         
         while(go):
+            startTime = time.time()
             try:
-                startTime = time.time()
                 numHappy,numSad,numLove,numEnvy,numAngry,numScared,numSurprise = stream()
                 if numHappy+numSad+numLove+numAngry+numScared+numSurprise == 0:
                     go = False
                     cleanUp()
-                    break
+                    break # Super hacky, I know kms - but the iterator stops returning values and needs to be
+                          # re initialized occasionally. This break sends us back to the outer while loop to
+                          # create a new instance of the iterator. Then we'll enter back into this loop and
+                          # everything works again. (Maybe I shouldn't be writing the queue's if I'm not
+                          # terminating the script..? TBD)
                             
                 # Add each value to the queue
                 happyQueue = addToQueue(happyQueue,numHappy)
@@ -322,8 +330,16 @@ if __name__ == "__main__":
                 pDiffScared = getPDiff(list(scaredQueue.queue))
                 pDiffSurprise = getPDiff(list(surpriseQueue.queue))
 
+                print("pDiffHappy: "+str(pDiffHappy))
+                print("pDiffSad: "+str(pDiffSad))
+                print("pDiffLove: "+str(pDiffLove))
+                print("pDiffEnvy: "+str(pDiffEnvy))
+                print("pDiffAngry: "+str(pDiffAngry))
+                print("pDiffScared: "+str(pDiffScared))
+                print("pDiffSurprise: "+str(pDiffSurprise))
+
                 # Find which mood had the greatest shift
-                maxDiff = 0
+                maxDiff = 0.0
                 if pDiffHappy > maxDiff:
                     maxDiff = pDiffHappy
                     state_change = "happy"
@@ -352,18 +368,26 @@ if __name__ == "__main__":
                     maxDiff = pDiffSurprise
                     state_change = "surprise"
                     maxQueue = surpriseQueue
+                print("maxDiff: "+str(maxDiff))
                 
                 # Determine if the change is large enough to change the state or change the lights
                 oldState = state
                 if state_change != oldState:
                     if maxDiff > pDiffLarge:
                         state = state_change
-                        rgbVariable.colorChangeLarge(state,oldState)
+                        sendToArduino.colorChangeLarge(state)
+                        print("Sent "+state+" to arduino.")
                     elif maxDiff > pDiffSmall:
                         state = state_change
-                        rgbVariable.colorChangeSmall(state,oldState)
+                        sendToArduino.colorChangeSmall(state)
+                        print("Sent "+state+" to arduino.")
+                        
+##                s = getRandomState()
+##                sendToArduino.colorChangeSmall(s)
+##                print("Sent "+s+" to Arduino.")
+##                time.sleep(5)
 
-                # Logging stuff...
+                # Debugging stuff...
                 print(state.title()+" Fast EMA: "+str(round(getEMA(list(maxQueue.queue),fast),2)))
                 print(state.title()+" Slow EMA: "+str(round(getEMA(list(maxQueue.queue),slow),2)))
                 print(state.title()+" %Diff = "+str(round(maxDiff*100,1)))
